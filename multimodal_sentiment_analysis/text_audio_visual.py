@@ -22,7 +22,7 @@ class Config:
     def __init__(self):
         self.batch_size = 8
         self.learning_rate = 0.0001
-        self.num_epochs = 10
+        self.num_epochs = 20
         self.num_labels = 2
         self.text_model_name = '/root/autodl-tmp/twitter-roberta-base-sentiment-latest/model'
         self.text_model_tokenzier = '/root/autodl-tmp/twitter-roberta-base-sentiment-latest/tokenizer'
@@ -30,7 +30,7 @@ class Config:
         self.audio_model = '/root/autodl-tmp/whisper-base/model'
         self.visual_processor = '/root/autodl-tmp/ViT/vit/processor'
         self.visual_model = '/root/autodl-tmp/ViT/vit/model'
-        self.max_length = 24  # tokenizer的最大长度
+        self.max_length = 20  # tokenizer的最大长度
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.shuffle = True
         self.data_path = '/root/autodl-tmp/cmu-mosi/label.csv'
@@ -139,8 +139,7 @@ dataset = MultimodalDataset(
     image_processor=config.visual_processor
 )
 
-
-def create_dataloaders(dataset, train_ratio=0.7, val_ratio=0.1, batch_size=8, num_workers=2):
+def create_dataloaders(dataset, train_ratio=0.6, val_ratio=0.2, batch_size=8, num_workers=2):
     train_size = int(train_ratio * len(dataset))
     val_size = int(val_ratio * len(dataset))
     test_size = len(dataset) - train_size - val_size
@@ -214,7 +213,7 @@ class VisualFeatureExtractor(nn.Module):
         # LSTM 网络
         self.lstm = nn.LSTM(
             input_size=768,  # ViT 的特征维度
-            hidden_size=768,
+            hidden_size=512,
             num_layers=2,
             batch_first=True,
             bidirectional=False
@@ -237,14 +236,12 @@ class VisualFeatureExtractor(nn.Module):
         
         return last_time_step
 
-
 class CrossAttention(nn.Module):
     def __init__(self, hidden_dim=512):
         super(CrossAttention, self).__init__()
         self.multihead = nn.MultiheadAttention(embed_dim=hidden_dim, num_heads=8)
 
     def forward(self, query, key, value):
-
         # Apply attention
         attn_output, _ = self.multihead(query, key, value)
         return attn_output.squeeze(0)  # 移除序列长度维度
@@ -258,14 +255,20 @@ class MultimodalSentimentModel(nn.Module):
 
         self.cross_attention_text_query = CrossAttention()
         self.cross_attention_audio_query = CrossAttention()
+        self.cross_attention_visual_query = CrossAttention()
+
+        self.cross_attention_avt_query = CrossAttention()
+        self.cross_attention_vat_query = CrossAttention()
 
         # 添加自注意力层
-        self.self_attention_text = nn.MultiheadAttention(embed_dim=512, num_heads=8)
-        self.self_attention_audio = nn.MultiheadAttention(embed_dim=512, num_heads=8)
+        self.self_attention_text = CrossAttention()
+        self.self_attention_audio = CrossAttention()
 
-        self.conv1d_text = nn.Conv1d(in_channels=1, out_channels=32, kernel_size=3, padding=1)
-        
-        self.conv1d_audio = nn.Conv1d(in_channels=1, out_channels=32, kernel_size=3, padding=1)
+        # FFN layers for text and audio
+        self.ffn_text1 = nn.Linear(512, 1024)
+        self.ffn_text2 = nn.Linear(1024, 512)
+        self.ffn_audio1 = nn.Linear(512, 1024)
+        self.ffn_audio2 = nn.Linear(1024, 512)
 
         # Linear layers to reduce dimension from 768 to 512
         self.fc_reduce_text = nn.Linear(768, 512)
@@ -281,27 +284,40 @@ class MultimodalSentimentModel(nn.Module):
         text_features = self.text_feature_extractor(text_inputs['input_ids'], text_inputs['attention_mask'])
         audio_features = self.audio_feature_extractor(audio_inputs)
         visual_features = self.visual_feature_extractor(visual_inputs)
-
         text_features = self.fc_reduce_text(text_features)
+
         audio_features = audio_features.squeeze(1)
+
         text_features = text_features.unsqueeze(0)
         audio_features = audio_features.unsqueeze(0)
+        visual_features = visual_features.unsqueeze(0)
 
-        text_as_query = self.cross_attention_text_query(text_features, audio_features, audio_features)
-        audio_as_query = self.cross_attention_audio_query(audio_features, text_features, text_features)
+        visual_as_query = self.cross_attention_visual_query(visual_features, audio_features, audio_features)
+        audio_as_query = self.cross_attention_audio_query(audio_features, visual_features, visual_features)
+        
+        combined_features = (visual_as_query + audio_as_query) / 2
 
-        # text_as_query = text_as_query.unsqueeze(1)  # 添加通道维度
-        # text_as_query = self.conv1d_text(text_as_query)
+        combined_features = combined_features.unsqueeze(0)
+        # print(combined_features.shape)
+        # print(text_features.shape)
 
-        # audio_as_query = audio_as_query.unsqueeze(1)  # 添加通道维度
-        # audio_as_query = self.conv1d_audio(audio_as_query)
+        text_as_query = self.cross_attention_avt_query(text_features, combined_features, combined_features)
+
+        combine_as_query = self.cross_attention_vat_query(combined_features, text_features, text_features)
 
         # # 应用自注意力
         # text_as_query, _ = self.self_attention_text(text_as_query, text_as_query, text_as_query)
         # audio_as_query, _ = self.self_attention_audio(audio_as_query, audio_as_query, audio_as_query)
-        # combined_features = torch.cat((text_as_query.squeeze(0), audio_as_query.squeeze(0)), dim=1)
-
-        combined_features = torch.cat((text_as_query, audio_as_query), dim=1)
+        # text_as_query = self.self_attention_text(text_as_query, text_as_query, text_as_query)
+        # audio_as_query = self.self_attention_audio(audio_as_query, audio_as_query, audio_as_query)
+        
+        # 应用共享的FFN
+        text_as_query = self.relu(self.ffn_text1(text_as_query))
+        text_as_query = self.ffn_text2(text_as_query)
+        combine_as_query = self.relu(self.ffn_text1(combine_as_query))
+        combine_as_query = self.ffn_text2(combine_as_query)
+        
+        combined_features = torch.cat((text_as_query, combine_as_query), dim=1)
 
         # Fully connected layers
         x = self.fc1(combined_features)
@@ -383,6 +399,7 @@ def test(model, test_loader, criterion, device):
             text_inputs, audio_inputs, visual_inputs, labels = data
             text_inputs = {key: val.to(device) for key, val in text_inputs.items()}
             audio_inputs = audio_inputs.to(device)
+            
             labels = labels.to(device)
             visual_inputs = visual_inputs.to(device)
 
