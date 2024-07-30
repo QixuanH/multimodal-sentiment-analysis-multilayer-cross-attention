@@ -257,6 +257,9 @@ class MultimodalSentimentModel(nn.Module):
         self.cross_attention_audio_query = CrossAttention()
         self.cross_attention_visual_query = CrossAttention()
 
+        self.cross_attention_avt_query = CrossAttention()
+        self.cross_attention_vat_query = CrossAttention()
+
         # 添加自注意力层
         self.self_attention_text = CrossAttention()
         self.self_attention_audio = CrossAttention()
@@ -264,12 +267,9 @@ class MultimodalSentimentModel(nn.Module):
         # FFN layers for text and audio
         self.ffn_text1 = nn.Linear(512, 1024)
         self.ffn_text2 = nn.Linear(1024, 512)
-        self.ffn_audio1 = nn.Linear(512, 1024)
-        self.ffn_audio2 = nn.Linear(1024, 512)
 
         # Linear layers to reduce dimension from 768 to 512
         self.fc_reduce_text = nn.Linear(768, 512)
-        self.fc_reduce_audio = nn.Linear(768, 512)
 
         self.fc1 = nn.Linear(512 + 512, 512)
         self.fc2 = nn.Linear(512, num_classes)
@@ -286,9 +286,20 @@ class MultimodalSentimentModel(nn.Module):
         audio_features = audio_features.squeeze(1)
         text_features = text_features.unsqueeze(0)
         audio_features = audio_features.unsqueeze(0)
+        visual_features = visual_features.unsqueeze(0)
 
-        text_as_query = self.cross_attention_text_query(text_features, audio_features, audio_features)
-        audio_as_query = self.cross_attention_audio_query(audio_features, text_features, text_features)
+        visual_as_query = self.cross_attention_visual_query(visual_features, audio_features, audio_features)
+        audio_as_query = self.cross_attention_audio_query(audio_features, visual_features, visual_features)
+        
+        # combined_features = (visual_as_query + audio_as_query) / 2
+        combined_features = torch.max(visual_as_query, audio_as_query)
+
+        combined_features = combined_features.unsqueeze(0)
+        # print(combined_features.shape)
+        # print(text_features.shape)
+        text_as_query = self.cross_attention_avt_query(text_features, combined_features, combined_features)
+
+        combine_as_query = self.cross_attention_vat_query(combined_features, text_features, text_features)
 
         # # 应用自注意力
         # text_as_query, _ = self.self_attention_text(text_as_query, text_as_query, text_as_query)
@@ -299,10 +310,10 @@ class MultimodalSentimentModel(nn.Module):
         # 应用共享的FFN
         text_as_query = self.relu(self.ffn_text1(text_as_query))
         text_as_query = self.ffn_text2(text_as_query)
-        audio_as_query = self.relu(self.ffn_text1(audio_as_query))
-        audio_as_query = self.ffn_text2(audio_as_query)
+        combine_as_query = self.relu(self.ffn_text1(combine_as_query))
+        combine_as_query = self.ffn_text2(combine_as_query)
         
-        combined_features = torch.cat((text_as_query, audio_as_query), dim=1)
+        combined_features = torch.cat((text_as_query, combine_as_query), dim=1)
 
         # Fully connected layers
         x = self.fc1(combined_features)
@@ -316,7 +327,7 @@ class MultimodalSentimentModel(nn.Module):
 model = MultimodalSentimentModel(num_classes=2)
 model.to(device)
 
-optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-5)
+optimizer = optim.AdamW(model.parameters(), lr=0.0001, weight_decay=1e-5)
 criterion = nn.CrossEntropyLoss()
 
 def train(model, train_loader, criterion, optimizer, device):

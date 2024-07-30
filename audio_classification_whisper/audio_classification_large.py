@@ -8,8 +8,6 @@ from torch import nn
 from tqdm import tqdm
 import random
 import numpy as np
-from sklearn.metrics import f1_score
-
 
 class Config:
     def __init__(self):
@@ -17,8 +15,8 @@ class Config:
         self.learning_rate = 0.00001
         self.num_epochs = 3
         self.num_labels = 2
-        self.model_name = '/root/autodl-tmp/whisper-base/model'
-        self.model_processor = '/root/autodl-tmp/whisper-base/processor'
+        self.model_name = '/root/autodl-tmp/whisper-large/model'
+        self.model_processor = '/root/autodl-tmp/whisper-large/processor'
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.shuffle = True
         self.data_path = '/root/autodl-tmp/cmu-mosi/label.csv'
@@ -125,16 +123,14 @@ class AudioClassificationModel(nn.Module):
         self.fc1 = nn.Linear(self.whisper.config.hidden_size, 512)
         self.relu = nn.ReLU()
         self.fc2 = nn.Linear(512, num_classes)
-        self.attention = nn.MultiheadAttention(embed_dim=self.whisper.config.hidden_size, num_heads=2, dropout=0.1)
+        self.attention = nn.MultiheadAttention(embed_dim=self.whisper.config.hidden_size, num_heads=8, dropout=0.1)
 
-        self.dropout = nn.Dropout(0.1)
+        self.dropout = nn.Dropout(0.3)
         # 禁止 Whisper 模型的参数训练
         for param in self.whisper.parameters():
             param.requires_grad = False
 
-        # for param in self.whisper.encoder.layers.parameters():
-        #     param.requires_grad = True
-        for param in self.whisper.encoder.layers[-1].parameters():
+        for param in self.whisper.encoder.layers.parameters():
             param.requires_grad = True
         # for param in self.whisper.encoder.layers[-2].parameters():
         #     param.requires_grad = True
@@ -155,6 +151,7 @@ class AudioClassificationModel(nn.Module):
         decoder_input_ids = torch.full((batch_size, 1), decoder_start_token_id, device=input_values.device)
 
         outputs = self.whisper(input_values, decoder_input_ids=decoder_input_ids).last_hidden_state
+        print(outputs.shape)
         # 通过两个全连接层
         outputs = outputs.permute(1, 0, 2)
         attention_output, _ = self.attention(outputs, outputs, outputs)
@@ -193,14 +190,12 @@ def train(model, dataloader, criterion, optimizer, device):
     accuracy = correct / total
     progress_bar.close()
     return average_loss, accuracy
-    
+
 def validate(model, dataloader, criterion, device):
     model.eval()
     total_loss = 0
     correct = 0
     total = 0
-    all_labels = []
-    all_predictions = []
     progress_bar = tqdm(dataloader, desc='Validating', leave=False)
     with torch.no_grad():
         for inputs, labels in progress_bar:
@@ -215,24 +210,19 @@ def validate(model, dataloader, criterion, device):
             correct += (predicted == labels).sum().item()
             total += labels.size(0)
 
-            all_labels.extend(labels.cpu().numpy())
-            all_predictions.extend(predicted.cpu().numpy())
-
             progress_bar.set_postfix(loss=f"{total_loss/(total+1e-5):.4f}", accuracy=f"{correct/total:.4f}")
     
     average_loss = total_loss / len(dataloader)
     accuracy = correct / total
-    f1 = f1_score(all_labels, all_predictions, average='weighted')  # 使用加权平均计算 F1 分数
     progress_bar.close()
-    return average_loss, accuracy, f1
-
+    return average_loss, accuracy
 
 # 初始化模型、优化器和损失函数
 model = AudioClassificationModel(config.num_labels).to(config.device)
 
 # 加载预训练的权重
-model_weights = torch.load('/root/experiment/audio_classification_whisper/pre_trained_mosei.pth', map_location=config.device)
-model.load_state_dict(model_weights)
+# model_weights = torch.load('/root/experiment/audio_classification_whisper/pre_trained_mosei.pth', map_location=config.device)
+# model.load_state_dict(model_weights)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate, weight_decay=1e-6)
 # optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
@@ -242,19 +232,21 @@ criterion = nn.CrossEntropyLoss()
 best_acc = 0.0
 best_model_path = 'best_model.pth'
 
-
-# 在训练循环中调用验证函数
-for epoch in range(config.num_epochs):
+# 训练和验证循环
+num_epochs = config.num_epochs
+for epoch in range(num_epochs):
     train_loss, train_acc = train(model, train_loader, criterion, optimizer, config.device)
-    val_loss, val_acc, val_f1 = validate(model, val_loader, criterion, config.device)
+    val_loss, val_acc = validate(model, val_loader, criterion, config.device)
 
-    print(f"Epoch {epoch+1}/{config.num_epochs}, Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}, Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}, Val F1: {val_f1:.4f}")
+    # 保存性能最好的模型
     if val_acc > best_acc:
         best_acc = val_acc
         torch.save(model.state_dict(), best_model_path)
         print(f"Saved best model with accuracy: {best_acc:.4f}")
 
+    print(f"Epoch {epoch+1}/{num_epochs}, Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}, Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}")
+
 # 加载最佳模型并在测试集上评估
 model.load_state_dict(torch.load(best_model_path))
-test_loss, test_acc, test_f1 = validate(model, test_loader, criterion, config.device)
-print(f"Test Loss: {test_loss:.4f}, Test Accuracy: {test_acc:.4f}, Test F1 Score: {test_f1:.4f}")
+test_loss, test_acc = validate(model, test_loader, criterion, config.device)
+print(f"Test Loss: {test_loss:.4f}, Test Accuracy: {test_acc:.4f}")

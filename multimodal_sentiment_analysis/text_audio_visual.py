@@ -22,7 +22,7 @@ class Config:
     def __init__(self):
         self.batch_size = 8
         self.learning_rate = 0.0001
-        self.num_epochs = 20
+        self.num_epochs = 10
         self.num_labels = 2
         self.text_model_name = '/root/autodl-tmp/twitter-roberta-base-sentiment-latest/model'
         self.text_model_tokenzier = '/root/autodl-tmp/twitter-roberta-base-sentiment-latest/tokenizer'
@@ -44,7 +44,7 @@ def set_seed(seed_value=42):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed_value)
 
-# 实例化配置类
+# 实例化配置类 
 config = Config()
 # 设置随机种子
 set_seed(42)
@@ -56,8 +56,11 @@ def rescale_images(images):
     images = (images - images.min()) / (images.max() - images.min())
     return images
 
+# 使用示例
+config = Config()
+
 class MultimodalDataset(Dataset):
-    def __init__(self, csv_file, audio_dir, video_dir, text_tokenizer, audio_processor, image_processor, transform=None):
+    def __init__(self, csv_file, audio_dir, video_dir, text_tokenizer, audio_processor, image_processor, mode, transform=None):
         """
         Args:
             csv_file (string): 包含样本元数据的 CSV 文件路径。
@@ -66,20 +69,23 @@ class MultimodalDataset(Dataset):
             text_tokenizer (string): 文本模型的 Tokenizer。
             audio_processor (string): 音频模型的 Processor。
             image_processor (string): 视觉模型的 Processor。
+            mode (string): 选择加载数据的模式（'train', 'valid', 'test'）。
             transform (callable, optional): 对图像进行预处理的函数。
         """
         self.data = pd.read_csv(csv_file)
+        self.data = self.data[self.data['mode'] == mode]  # 选择对应模式的数据
         self.audio_dir = audio_dir
         self.video_dir = video_dir
         self.text_tokenizer = AutoTokenizer.from_pretrained(text_tokenizer)
         self.audio_processor = WhisperProcessor.from_pretrained(audio_processor)
         self.image_processor = ViTImageProcessor.from_pretrained(image_processor)
-        self.transform = transforms.Compose([
+        self.transform = transform if transform is not None else transforms.Compose([
             transforms.Resize((224, 224)),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
 
+    # 省略其他部分，与之前相同
     def __len__(self):
         return len(self.data)
     
@@ -130,22 +136,37 @@ class MultimodalDataset(Dataset):
 # 使用示例
 config = Config()
 
-dataset = MultimodalDataset(
+train_dataset = MultimodalDataset(
     csv_file=config.data_path,
     audio_dir='/root/autodl-tmp/cmu-mosi/wav',
     video_dir='/root/autodl-tmp/cmu-mosi/visual',
     text_tokenizer=config.text_model_tokenzier,
     audio_processor=config.audio_processor,
-    image_processor=config.visual_processor
+    image_processor=config.visual_processor,
+    mode='train'
 )
 
-def create_dataloaders(dataset, train_ratio=0.6, val_ratio=0.2, batch_size=8, num_workers=2):
-    train_size = int(train_ratio * len(dataset))
-    val_size = int(val_ratio * len(dataset))
-    test_size = len(dataset) - train_size - val_size
-    
-    train_dataset, val_dataset, test_dataset = random_split(dataset, [train_size, val_size, test_size])
-    
+val_dataset = MultimodalDataset(
+    csv_file=config.data_path,
+    audio_dir='/root/autodl-tmp/cmu-mosi/wav',
+    video_dir='/root/autodl-tmp/cmu-mosi/visual',
+    text_tokenizer=config.text_model_tokenzier,
+    audio_processor=config.audio_processor,
+    image_processor=config.visual_processor,
+    mode='valid'
+)
+
+test_dataset = MultimodalDataset(
+    csv_file=config.data_path,
+    audio_dir='/root/autodl-tmp/cmu-mosi/wav',
+    video_dir='/root/autodl-tmp/cmu-mosi/visual',
+    text_tokenizer=config.text_model_tokenzier,
+    audio_processor=config.audio_processor,
+    image_processor=config.visual_processor,
+    mode='test'
+)
+
+def create_dataloaders(train_dataset, val_dataset, test_dataset, batch_size=8, num_workers=2):
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
@@ -153,7 +174,8 @@ def create_dataloaders(dataset, train_ratio=0.6, val_ratio=0.2, batch_size=8, nu
     return train_loader, val_loader, test_loader
 
 # 使用示例
-train_loader, val_loader, test_loader = create_dataloaders(dataset, batch_size=config.batch_size, num_workers=config.num_workers)
+train_loader, val_loader, test_loader = create_dataloaders(train_dataset, val_dataset, test_dataset, batch_size=config.batch_size, num_workers=config.num_workers)
+
 
 # 打印第一个批次的数据
 def print_first_batch(dataloader):
@@ -253,7 +275,6 @@ class MultimodalSentimentModel(nn.Module):
         self.audio_feature_extractor = AudioFeatureExtractor()
         self.visual_feature_extractor = VisualFeatureExtractor()
 
-        self.cross_attention_text_query = CrossAttention()
         self.cross_attention_audio_query = CrossAttention()
         self.cross_attention_visual_query = CrossAttention()
 
@@ -267,17 +288,18 @@ class MultimodalSentimentModel(nn.Module):
         # FFN layers for text and audio
         self.ffn_text1 = nn.Linear(512, 1024)
         self.ffn_text2 = nn.Linear(1024, 512)
-        self.ffn_audio1 = nn.Linear(512, 1024)
-        self.ffn_audio2 = nn.Linear(1024, 512)
+
+        self.ffn_3_1 = nn.Linear(512, 1024)
+        self.ffn_3_2 = nn.Linear(1024, 512)
+
 
         # Linear layers to reduce dimension from 768 to 512
         self.fc_reduce_text = nn.Linear(768, 512)
-        self.fc_reduce_audio = nn.Linear(768, 512)
 
         self.fc1 = nn.Linear(512 + 512, 512)
         self.fc2 = nn.Linear(512, num_classes)
         self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(0.2)
+        self.dropout = nn.Dropout(0.25)
         self.bn = nn.BatchNorm1d(512)
 
     def forward(self, text_inputs, audio_inputs, visual_inputs):
@@ -286,8 +308,16 @@ class MultimodalSentimentModel(nn.Module):
         visual_features = self.visual_feature_extractor(visual_inputs)
         text_features = self.fc_reduce_text(text_features)
 
-        audio_features = audio_features.squeeze(1)
+        text_features = self.ffn_3_1(text_features)
+        text_features = self.ffn_3_2(text_features)
 
+        audio_features = self.ffn_3_1(audio_features)
+        audio_features = self.ffn_3_2(audio_features)
+
+        visual_features = self.ffn_3_1(visual_features)
+        visual_features = self.ffn_3_2(visual_features)
+
+        audio_features = audio_features.squeeze(1)
         text_features = text_features.unsqueeze(0)
         audio_features = audio_features.unsqueeze(0)
         visual_features = visual_features.unsqueeze(0)
@@ -295,25 +325,23 @@ class MultimodalSentimentModel(nn.Module):
         visual_as_query = self.cross_attention_visual_query(visual_features, audio_features, audio_features)
         audio_as_query = self.cross_attention_audio_query(audio_features, visual_features, visual_features)
         
-        combined_features = (visual_as_query + audio_as_query) / 2
+        combined_features = (0.5 * visual_as_query + 0.5 * audio_as_query) 
 
         combined_features = combined_features.unsqueeze(0)
         # print(combined_features.shape)
         # print(text_features.shape)
-
         text_as_query = self.cross_attention_avt_query(text_features, combined_features, combined_features)
 
         combine_as_query = self.cross_attention_vat_query(combined_features, text_features, text_features)
 
-        # # 应用自注意力
-        # text_as_query, _ = self.self_attention_text(text_as_query, text_as_query, text_as_query)
-        # audio_as_query, _ = self.self_attention_audio(audio_as_query, audio_as_query, audio_as_query)
-        # text_as_query = self.self_attention_text(text_as_query, text_as_query, text_as_query)
-        # audio_as_query = self.self_attention_audio(audio_as_query, audio_as_query, audio_as_query)
+        # # 应用自注意力       
+        text_as_query = self.self_attention_text(text_as_query, text_as_query, text_as_query)
+        combine_as_query = self.self_attention_audio(combine_as_query, combine_as_query, combine_as_query)
         
         # 应用共享的FFN
         text_as_query = self.relu(self.ffn_text1(text_as_query))
         text_as_query = self.ffn_text2(text_as_query)
+
         combine_as_query = self.relu(self.ffn_text1(combine_as_query))
         combine_as_query = self.ffn_text2(combine_as_query)
         
@@ -331,7 +359,7 @@ class MultimodalSentimentModel(nn.Module):
 model = MultimodalSentimentModel(num_classes=2)
 model.to(device)
 
-optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-5)
+optimizer = optim.AdamW(model.parameters(), lr=0.0001, weight_decay=0.01)
 criterion = nn.CrossEntropyLoss()
 
 def train(model, train_loader, criterion, optimizer, device):
