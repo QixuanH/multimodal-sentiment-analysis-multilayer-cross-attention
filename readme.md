@@ -6,6 +6,15 @@ The model architecture is designed end-to-end, where the feature extraction part
 
 ![image](model.drawio.png)
 
+## Preprocessing
+Data preprocessing includes:
+
+1. Text cleaning, converting abbreviations to full form, converting all text to lowercase, etc.
+2. Extracting audio, noise reduction, etc.
+3. Extracting video frames, facial recognition, and cropping facial images, etc.
+
+![image](preprocessing.drawio.png)
+
 ## Feature Extractors
 
 Text: Features are extracted using the twitter-roberta-base-sentiment-latest model.
@@ -46,9 +55,14 @@ project_root/
 │
 ├── README.md                              # Project introduction
 ```
+
 ## Running the Project
 
 After downloading the dataset, place it in the data directory and execute the three preprocessing scripts. Ensure you modify the data output paths in the preprocessing scripts. Save the processed data in the data/processed directory.
 
 Once the data is processed, you can train and test the models by directly executing the models in the models directory. Remember to modify the dataset paths and pretrained model paths in the models accordingly.
+
+## The flowchart for a single sample is as follows:
+
+![image](flowchart.drawio.png)
 
