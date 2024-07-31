@@ -23,7 +23,7 @@ The dataset used is CMU-MOSI, which can be downloaded from the official website:
 http://multicomp.cs.cmu.edu/resources/cmu-mosi-dataset/
 
 ## File Structure
-
+```
 project_root/
 │
 ├── data/
@@ -43,8 +43,7 @@ project_root/
 │   ├── visual_preprocess_data.py          # Video data preprocessing
 │
 ├── README.md                              # Project introduction
-
-
+```
 ## Running the Project
 
 After downloading the dataset, place it in the data directory and execute the three preprocessing scripts. Ensure you modify the data output paths in the preprocessing scripts. Save the processed data in the data/processed directory.
