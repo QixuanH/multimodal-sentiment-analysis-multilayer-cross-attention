@@ -4,6 +4,8 @@ This project aims to perform sentiment analysis using multimodal data (text, aud
 
 The model architecture is designed end-to-end, where the feature extraction parts are also involved in the training process.
 
+![image](model.drawio.png)
+
 ## Feature Extractors
 
 Text: Features are extracted using the twitter-roberta-base-sentiment-latest model.
