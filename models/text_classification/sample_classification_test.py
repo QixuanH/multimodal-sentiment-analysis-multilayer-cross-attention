@@ -11,7 +11,7 @@ inputs = tokenizer(sample_text, truncation=True, padding='max_length', max_lengt
 
 print(inputs)
 
-best_model_path = '/root/FER/text_classification/best_model.pth'
+best_model_path = 'best_model.pth'
 
 class DeBERTaClassifier(nn.Module):
     def __init__(self, ):
