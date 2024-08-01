@@ -10,7 +10,6 @@ import random
 import numpy as np
 from sklearn.metrics import f1_score
 
-
 class Config:
     def __init__(self):
         self.batch_size = 8
@@ -231,7 +230,7 @@ def validate(model, dataloader, criterion, device):
 model = AudioClassificationModel(config.num_labels).to(config.device)
 
 # 加载预训练的权重
-model_weights = torch.load('/root/experiment/audio_classification_whisper/pre_trained_mosei.pth', map_location=config.device)
+model_weights = torch.load('/root/experiment/models/audio_classification/pre_trained_mosei.pth', map_location=config.device)
 model.load_state_dict(model_weights)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate, weight_decay=1e-6)

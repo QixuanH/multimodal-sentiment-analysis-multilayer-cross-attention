@@ -22,7 +22,7 @@ class Config:
     def __init__(self):
         self.batch_size = 8
         self.learning_rate = 0.0001
-        self.num_epochs = 10
+        self.num_epochs = 1
         self.num_labels = 2
         self.text_model_name = '/root/autodl-tmp/twitter-roberta-base-sentiment-latest/model'
         self.text_model_tokenzier = '/root/autodl-tmp/twitter-roberta-base-sentiment-latest/tokenizer'

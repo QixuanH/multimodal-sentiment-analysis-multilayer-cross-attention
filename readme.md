@@ -34,6 +34,7 @@ The dataset used is CMU-MOSI, which can be downloaded from the official website:
 http://multicomp.cs.cmu.edu/resources/cmu-mosi-dataset/
 
 ## File Structure
+
 ```
 project_root/
 │

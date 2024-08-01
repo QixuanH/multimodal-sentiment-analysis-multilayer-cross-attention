@@ -203,9 +203,13 @@ model = MultimodalSentimentModel(num_classes=2)
 model_path = 'best_model_audio_text_visual.pth'
 model.load_state_dict(torch.load(model_path))
 
+
+
 input_text = "but it was really really awesome"
 audio_path = "/root/autodl-tmp/cmu-mosi/wav/03bSnISJMiM/12.wav"
 visual_path = "/root/autodl-tmp/cmu-mosi/visual/03bSnISJMiM/12"
+
+
 
 def predict_single_sample(path, input_text, clip_path, model):
 
