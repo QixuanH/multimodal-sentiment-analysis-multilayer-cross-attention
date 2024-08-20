@@ -25,7 +25,7 @@ class Config:
     def __init__(self):
         self.batch_size = 8
         self.learning_rate = 0.0001
-        self.num_epochs = 20
+        self.num_epochs = 10
         self.num_labels = 2
         self.text_model_name = '/root/autodl-tmp/twitter-roberta-base-sentiment-latest/model'
         self.text_model_tokenzier = '/root/autodl-tmp/twitter-roberta-base-sentiment-latest/tokenizer'
@@ -33,7 +33,7 @@ class Config:
         self.audio_model = '/root/autodl-tmp/whisper-base/model'
         self.visual_processor = '/root/autodl-tmp/ViT/vit/processor'
         self.visual_model = '/root/autodl-tmp/ViT/vit/model'
-        self.max_length = 10  # tokenizer的最大长度
+        self.max_length = 20  # tokenizer的最大长度
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.shuffle = True
         self.data_path = '/root/autodl-tmp/cmu-mosi/label.csv'
@@ -365,36 +365,36 @@ class MultimodalSentimentModel(nn.Module):
 
          # 应用多层交叉模态注意力
         for i in range(self.num_layers):
-            audio_features = audio_features.unsqueeze(0)
             visual_features = visual_features.unsqueeze(0)
-            visual_as_query = self.visual_cross_attention_layers[i](visual_features, audio_features)
-            audio_as_query = self.audio_cross_attention_layers[i](audio_features, visual_features)
-
-            # 更新输入为当前层的输出，为下一层做准备
-            visual_features = visual_as_query
-            audio_features = audio_as_query
-            
-        combined_features = (0.5 * visual_features + 0.5 * audio_features)
-        # combined_features = self.gate_fusion(visual_features, audio_features)
- 
-        for i in range(self.num_layers):
             text_features = text_features.unsqueeze(0)
-            combined_features = combined_features.unsqueeze(0)
-            text_as_query = self.cross_attention_avt_query[i](text_features, combined_features)
-            combine_as_query = self.cross_attention_vat_query[i](combined_features, text_features)
+            text_as_query = self.visual_cross_attention_layers[i](text_features, visual_features)
+            visual_as_query = self.audio_cross_attention_layers[i](visual_features, text_features)
 
             # 更新输入为当前层的输出，为下一层做准备
             text_features = text_as_query
+            visual_features = visual_as_query
+            
+        combined_features = (0.5 * text_features + 0.5 * visual_features)
+        # combined_features = self.gate_fusion(visual_features, audio_features)
+ 
+        for i in range(self.num_layers):
+            audio_features = audio_features.unsqueeze(0)
+            combined_features = combined_features.unsqueeze(0)
+            audio_as_query = self.cross_attention_avt_query[i](audio_features, combined_features)
+            combine_as_query = self.cross_attention_vat_query[i](combined_features, audio_features)
+
+            # 更新输入为当前层的输出，为下一层做准备
+            audio_features = audio_as_query
             combined_features = combine_as_query
  
         # 应用共享的FFN
-        text_features = self.relu(self.ffn_text1(text_features))
-        text_features = self.ffn_text2(text_features)
+        audio_features = self.relu(self.ffn_text1(audio_features))
+        audio_features = self.ffn_text2(audio_features)
 
         combined_features = self.relu(self.ffn_text1(combined_features))
         combined_features = self.ffn_text2(combined_features)
         
-        combined_features = torch.cat((text_features, combined_features), dim=1)
+        combined_features = torch.cat((audio_features, combined_features), dim=1)
         
         # Fully connected layers
         x = self.fc1(combined_features)
